@@ -6,6 +6,8 @@ This project implements a Deep Q-Network (DQN) agent to play a 2D racing game us
 
 Here is my best trained model:
 
+https://github.com/user-attachments/assets/385d3d2a-9cea-4381-9d35-4d467f4e4942
+
 
 ## Features
 
