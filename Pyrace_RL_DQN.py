@@ -24,19 +24,19 @@ DISPLAY_EPISODES = 5
 SAVE_EPISODES = 100
 
 # Hyperparameters
-LEARNING_RATE = 0.0001
-GAMMA = 0.99
-MEMORY_SIZE = 50000
+LEARNING_RATE = 0.0001  # Lower learning rate for stability
+GAMMA = 0.99            # Discount factor
+MEMORY_SIZE = 50000     # Replay buffer size
 BATCH_SIZE = 32
 TRAINING_FREQUENCY = 8
-EPSILON_START = 0.3
-EPSILON_MIN = 0.05
+EPSILON_START = 0.3     # Initial exploration rate
+EPSILON_MIN = 0.05      # Minimum exploration rate
 EPSILON_DECAY = 0.9998
 
 # Training settings
 NUM_EPISODES = 10000
 MAX_STEPS = 2000
-UPDATE_TARGET_EVERY = 10
+UPDATE_TARGET_EVERY = 10  # Update target network every N episodes
 RENDER_EVERY = 1
 
 # Set device
@@ -57,14 +57,14 @@ class EnhancedDQNetwork(nn.Module):
             nn.LayerNorm(128),
         )
         
-        # Value stream (estimates state value)
+        # Value stream - estimates state value V(s)
         self.value_stream = nn.Sequential(
             nn.Linear(128, 64),
             nn.LeakyReLU(0.1),
             nn.Linear(64, 1)
         )
         
-        # Advantage stream (estimates advantage of each action)
+        # Advantage stream - estimates advantages A(s,a) for each action
         self.advantage_stream = nn.Sequential(
             nn.Linear(128, 64), 
             nn.LeakyReLU(0.1),
@@ -75,14 +75,14 @@ class EnhancedDQNetwork(nn.Module):
         features = self.feature_layer(x)
         value = self.value_stream(features)
         advantages = self.advantage_stream(features)
-        # Combine using dueling architecture formula
+        # Q(s,a) = V(s) + (A(s,a) - mean(A(s)))
         return value + (advantages - advantages.mean(dim=1, keepdim=True))
 
 # Prioritized replay buffer for more efficient learning
 class PrioritizedReplayBuffer:
     def __init__(self, capacity, alpha=0.6):
         self.capacity = capacity
-        self.alpha = alpha
+        self.alpha = alpha        # Controls priority importance (0=uniform, 1=full priority)
         self.buffer = []
         self.priorities = np.zeros(capacity, dtype=np.float32)
         self.position = 0
@@ -99,6 +99,7 @@ class PrioritizedReplayBuffer:
                 self.expected_state_size = state_np.shape[0]
                 print(f"Setting expected state size to {self.expected_state_size}")
             
+            # Handle state size inconsistencies with padding/truncating
             if self.expected_state_size is not None:
                 if state_np.shape[0] != self.expected_state_size:
                     self.warning_count += 1
@@ -117,6 +118,7 @@ class PrioritizedReplayBuffer:
             else:
                 self.buffer[self.position] = (state_np, action, reward, next_state_np, done)
             
+            # New experiences get max priority
             self.priorities[self.position] = self.max_priority
             self.position = (self.position + 1) % self.capacity
         except Exception as e:
@@ -140,12 +142,15 @@ class PrioritizedReplayBuffer:
             else:
                 probs = self.priorities
             
+            # Convert priorities to sampling probabilities
             probs = probs ** self.alpha
             probs = probs / probs.sum()
             
+            # Sample based on priorities
             indices = np.random.choice(len(self.buffer), batch_size, p=probs)
             samples = [self.buffer[idx] for idx in indices]
             
+            # Importance sampling weights to correct bias
             weights = (len(self.buffer) * probs[indices]) ** (-beta)
             weights = weights / weights.max()
             
@@ -198,6 +203,7 @@ class EnhancedDQNAgent:
         self.state_size = state_size
         self.action_size = action_size
         
+        # Policy network (for action selection) and target network (for stable learning)
         self.policy_net = EnhancedDQNetwork(state_size, action_size).to(device)
         self.target_net = EnhancedDQNetwork(state_size, action_size).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
@@ -208,9 +214,9 @@ class EnhancedDQNAgent:
         
         self.epsilon = EPSILON_START
         self.steps = 0
-        self.beta = 0.4
+        self.beta = 0.4  # Importance sampling correction factor
         self.beta_increment = 0.001
-        self.recent_actions = deque(maxlen=100)
+        self.recent_actions = deque(maxlen=100)  # For smart exploration
     
     def act(self, state, training=True):
         try:
@@ -224,10 +230,13 @@ class EnhancedDQNAgent:
                 else:
                     state_array = state_array[:self.state_size]
             
+            # Epsilon-greedy with smart exploration
             if training and random.random() < self.epsilon:
                 if random.random() < 0.2:
+                    # Pure random exploration
                     action = random.randrange(self.action_size)
                 else:
+                    # Smart exploration - prefer less frequently used actions
                     action_counts = np.zeros(self.action_size)
                     for a in self.recent_actions:
                         action_counts[a] += 1
@@ -237,6 +246,7 @@ class EnhancedDQNAgent:
                     probs = probs / np.sum(probs)
                     action = np.random.choice(self.action_size, p=probs)
             else:
+                # Exploitation - use policy network
                 with torch.no_grad():
                     state_tensor = torch.FloatTensor(state_array).unsqueeze(0).to(device)
                     q_values = self.policy_net(state_tensor)
@@ -266,25 +276,29 @@ class EnhancedDQNAgent:
             
         states, actions, rewards, next_states, dones, weights, indices = batch
         
+        # Get current Q-values
         q_values = self.policy_net(states).gather(1, actions.unsqueeze(1))
         
-        # Double DQN: use policy net to select actions, target net to evaluate them
+        # Double DQN: policy net selects actions, target net evaluates them
         with torch.no_grad():
             next_actions = self.policy_net(next_states).max(1)[1].unsqueeze(1)
             next_q_values = self.target_net(next_states).gather(1, next_actions)
             target_q_values = rewards.unsqueeze(1) + GAMMA * next_q_values * (1 - dones.unsqueeze(1))
         
+        # TD errors for prioritized replay update
         td_errors = torch.abs(target_q_values - q_values)
         loss = (weights.unsqueeze(1) * F.smooth_l1_loss(q_values, target_q_values, reduction='none')).mean()
         
         self.optimizer.zero_grad()
         loss.backward()
         
+        # Gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 10.0)
         
         self.optimizer.step()
         self.steps += 1
         
+        # Update priorities based on new TD errors
         with torch.no_grad():
             self.memory.update_priorities(indices, (td_errors.detach().cpu().numpy() + 1e-6).flatten())
         
@@ -330,6 +344,7 @@ def train():
     
     pygame.init()
     
+    # Try loading enhanced environment, fallback to basic if needed
     try:
         env = gym.make("Pyrace-v3", render_mode="human").unwrapped
         print("Using enhanced Pyrace-v3 environment")
@@ -354,6 +369,7 @@ def train():
     screen = pygame.display.set_mode((800, 600), pygame.HWSURFACE | pygame.DOUBLEBUF)
     pygame.display.set_caption("Enhanced PyTorch DQN Racing")
     
+    # Training metrics
     rewards = []
     losses = []
     best_reward = -float('inf')
@@ -361,7 +377,7 @@ def train():
     checkpoint_counts = []
     action_distribution = np.zeros(action_size)
     
-    # Try to load previous checkpoint if exists
+    # Load checkpoint if exists
     start_episode = 0
     if os.path.exists(f'models_{VERSION_NAME}/latest.pt'):
         if agent.load(f'models_{VERSION_NAME}/latest.pt'):
@@ -442,6 +458,7 @@ def train():
                 env.render()
                 pygame.display.update()
             
+            # Periodic training during episode
             if step % TRAINING_FREQUENCY == 0:
                 loss = agent.train()
                 if loss > 0:
@@ -449,6 +466,7 @@ def train():
                     loss_count += 1
             
             if done:
+                # Extra training at episode end
                 for _ in range(10):
                     agent.train()
                 break
@@ -463,6 +481,7 @@ def train():
         else:
             losses.append(0)
         
+        # Update target network periodically
         if episode % UPDATE_TARGET_EVERY == 0:
             agent.update_target()
         
@@ -486,6 +505,7 @@ def train():
             print(f"Episode {episode}: reward={total_reward:.1f}, avg={avg_reward:.1f}, ε={agent.epsilon:.4f}, steps={step+1}, ckpt={max_checkpoint}, time={episode_time:.2f}s")
             print(f"Actions: {action_str}")
         
+        # Save best model
         if total_reward > best_reward:
             best_reward = total_reward
             agent.save(f'models_{VERSION_NAME}/best.pt')
@@ -572,7 +592,7 @@ def test(model_path=None):
         print("Could not load model for testing")
         return
     
-    agent.epsilon = 0.01
+    agent.epsilon = 0.01  # Minimal exploration during testing
     
     pygame.display.init()
     screen = pygame.display.set_mode((800, 600))
@@ -622,7 +642,7 @@ def test(model_path=None):
 
 
 if __name__ == "__main__":
-    mode = 'test'
+    mode = 'test' # 'train' or 'test'
     
     try:
         if mode == 'train':
