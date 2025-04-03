@@ -2,6 +2,11 @@
 
 This project implements a Deep Q-Network (DQN) agent to play a 2D racing game using PyTorch. The agent learns to navigate a race track, avoid walls, and complete laps as quickly as possible.
 
+## Demo
+
+Here is my best trained model:
+
+
 ## Features
 
 - **DQN implementation**:
