@@ -1,2 +1,8 @@
-/.DS_Store
+__pycache__/
+venv/
+.vscode/
+.DS_Store
+
+
 /RLI_17_0A - ASSIGNMENT - Pit lane repairs.pdf
+/Pyrace_performance_analysis.ipynb
